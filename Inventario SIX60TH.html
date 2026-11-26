@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f2a37">
+<title>Inventario</title>
+<style>
+:root{--bg:#f3f1ec;--card:#fff;--ink:#1f2a37;--mute:#6b7280;--line:#dcd8cf;--acc:#1f2a37;--on:#fff;--ok:#1d7a4d;--bad:#b42318;--warn:#f5b301;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14181e;--card:#1e242d;--ink:#eceae4;--mute:#9aa3af;--line:#323a46;--acc:#f5b301;--on:#14181e;--ok:#4cc38a;--bad:#ff7b6e}}
+:root[data-theme="dark"]{--bg:#14181e;--card:#1e242d;--ink:#eceae4;--mute:#9aa3af;--line:#323a46;--acc:#f5b301;--on:#14181e;--ok:#4cc38a;--bad:#ff7b6e}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:12px 14px 96px}
+h1{font-size:22px;margin:6px 0 12px;font-weight:800;letter-spacing:-.01em}
+.row{display:flex;gap:8px;align-items:center}
+input,select,button{font:inherit;color:inherit}
+input,select{width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--card)}
+input:focus,button:focus-visible,select:focus{outline:3px solid var(--warn);outline-offset:1px}
+button{border:0;border-radius:10px;padding:11px 14px;background:var(--acc);color:var(--on);font-weight:700;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+button.in{background:var(--ok);color:#fff}button.out{background:var(--bad);color:#fff}
+.item{display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:8px;width:100%;text-align:left;color:var(--ink);font-weight:400}
+.item b{display:block;font-weight:700}
+.sub{color:var(--mute);font-size:13px}
+.qty{font-size:24px;font-weight:800;min-width:48px;text-align:right}
+.qty.low{color:var(--bad)}
+.tag{display:inline-block;font-size:12px;font-weight:700;background:var(--warn);color:#1f2a37;border-radius:6px;padding:1px 6px;margin-left:6px}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom,0px);z-index:5}
+nav button{flex:1;background:transparent;color:var(--mute);border-radius:0;padding:14px 4px;font-size:14px}
+nav button[aria-selected="true"]{color:var(--ink);box-shadow:inset 0 3px 0 var(--acc)}
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.sum div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px}
+.sum b{font-size:22px;display:block}
+.mv-in{color:var(--ok);font-weight:800}.mv-out{color:var(--bad);font-weight:800}
+dialog{border:0;border-radius:16px;padding:16px;width:min(92vw,420px);background:var(--card);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+video{width:100%;border-radius:12px;background:#000;max-height:50vh}
+.empty{color:var(--mute);text-align:center;padding:28px 10px}
+@media (prefers-reduced-motion:no-preference){button{transition:transform .08s}button:active{transform:scale(.97)}}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<nav role="tablist">
+<button role="tab" data-t="prod">Productos</button>
+<button role="tab" data-t="mov">Movimientos</button>
+<button role="tab" data-t="scan">Escanear</button>
+</nav>
+<dialog id="dlg"></dialog>
+<script>
+var S={products:[],moves:[]},tab="prod",q="",stream=null,timer=null;
+function load(){try{var r=localStorage.getItem("inv1");if(r)S=JSON.parse(r)}catch(e){}}
+function save(){try{localStorage.setItem("inv1",JSON.stringify(S))}catch(e){toast("No se pudo guardar en este navegador")}}
+function $(s){return document.querySelector(s)}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function toast(m){alert(m)}
+function find(code){return S.products.find(function(p){return p.code&&p.code===code})}
+function stopCam(){if(timer){clearInterval(timer);timer=null}if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}}
+function go(t){stopCam();tab=t;render()}
+function render(){
+ document.querySelectorAll("nav button").forEach(function(b){b.setAttribute("aria-selected",b.dataset.t===tab)});
+ var a=$("#app");
+ if(tab==="prod")a.innerHTML=viewProd();else if(tab==="mov")a.innerHTML=viewMov();else{a.innerHTML=viewScan()}
+ if(tab==="prod"){var s=$("#q");if(s){s.oninput=function(){q=s.value;var pos=s.selectionStart;render();var n=$("#q");n.focus();n.setSelectionRange(pos,pos)}}}
+}
+function viewProd(){
+ var low=S.products.filter(function(p){return p.stock<=p.min}).length;
+ var total=S.products.reduce(function(a,p){return a+p.stock},0);
+ var val=S.products.reduce(function(a,p){return a+p.stock*(p.price||0)},0);
+ var list=S.products.filter(function(p){var t=q.toLowerCase();return !t||p.name.toLowerCase().indexOf(t)>-1||(p.code||"").toLowerCase().indexOf(t)>-1});
+ var h='<h1>Inventario</h1><div class="sum"><div><b>'+S.products.length+'</b><span class="sub">productos</span></div><div><b>'+total+'</b><span class="sub">unidades</span></div><div><b'+(low?' style="color:var(--bad)"':'')+'>'+low+'</b><span class="sub">stock bajo</span></div></div>';
+ if(val)h+='<p class="sub">Valor en stock: '+val.toLocaleString("es-CL")+'</p>';
+ h+='<div class="row"><input id="q" type="search" placeholder="Buscar por nombre o código" value="'+esc(q)+'"><button onclick="editProd()">Nuevo</button></div>';
+ if(!list.length)h+='<div class="empty">'+(S.products.length?'Nada coincide con la búsqueda.':'Aún no hay productos. Toca Nuevo o escanea un código.')+'</div>';
+ list.forEach(function(p){h+='<button class="item" onclick="moveDlg(\''+p.id+'\')"><span><b>'+esc(p.name)+(p.stock<=p.min?'<span class="tag">Bajo</span>':'')+'</b><span class="sub">'+esc(p.code||"Sin código")+(p.price?' · '+p.price.toLocaleString("es-CL"):'')+'</span></span><span class="qty'+(p.stock<=p.min?' low':'')+'">'+p.stock+'</span></button>'});
+ h+='<div class="row" style="margin-top:16px"><button class="ghost" onclick="exportCsv()">Exportar CSV</button></div>';
+ return h;
+}
+function viewMov(){
+ var h='<h1>Movimientos</h1>';
+ if(!S.moves.length)return h+'<div class="empty">Todavía no hay entradas ni salidas.</div>';
+ S.moves.slice().reverse().slice(0,200).forEach(function(m){
+  var d=new Date(m.ts);
+  h+='<div class="item"><span><b>'+esc(m.name)+'</b><span class="sub">'+d.toLocaleString("es-CL",{dateStyle:"short",timeStyle:"short"})+(m.note?' · '+esc(m.note):'')+'</span></span><span class="'+(m.type==="in"?'mv-in':'mv-out')+'">'+(m.type==="in"?'+':'−')+m.qty+'</span></div>';
+ });
+ return h;
+}
+function viewScan(){
+ setTimeout(startCam,0);
+ return '<h1>Escanear código</h1><video id="vid" playsinline muted></video><p class="sub" id="st">Iniciando cámara…</p><label for="man">O escribe el código (también sirve un lector USB o Bluetooth)</label><div class="row"><input id="man" placeholder="Código de barras" inputmode="numeric"><button onclick="gotCode($(\'#man\').value.trim())">Buscar</button></div>';
+}
+async function startCam(){
+ var st=$("#st");if(!st)return;
+ if(!("BarcodeDetector" in window)||!navigator.mediaDevices){st.textContent="Este navegador no puede leer códigos con la cámara. Usa Chrome en Android o escribe el código.";return}
+ try{
+  var det=new BarcodeDetector();
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+  var v=$("#vid");if(!v){stopCam();return}
+  v.srcObject=stream;await v.play();st.textContent="Apunta al código de barras";
+  timer=setInterval(async function(){
+   try{var r=await det.detect(v);if(r.length){var c=r[0].rawValue;stopCam();gotCode(c)}}catch(e){}
+  },400);
+ }catch(e){st.textContent="No se pudo abrir la cámara. Revisa el permiso o escribe el código."}
+}
+function gotCode(c){
+ if(!c)return;
+ var p=find(c);
+ if(p){moveDlg(p.id)}else{editProd(null,c)}
+}
+var dlg=$("#dlg");
+function close(){dlg.close();if(tab==="scan")go("prod");else render()}
+function editProd(id,code){
+ var p=id?S.products.find(function(x){return x.id===id}):{name:"",code:code||"",stock:0,min:0,price:""};
+ dlg.innerHTML='<h2 style="margin:0">'+(id?'Editar producto':'Nuevo producto')+'</h2>'
+ +'<label>Nombre</label><input id="f_n" value="'+esc(p.name)+'">'
+ +'<label>Código de barras o SKU</label><input id="f_c" value="'+esc(p.code)+'">'
+ +'<div class="row"><div><label>Stock inicial</label><input id="f_s" type="number" min="0" value="'+p.stock+'"'+(id?' disabled':'')+'></div><div><label>Avisar bajo</label><input id="f_m" type="number" min="0" value="'+p.min+'"></div><div><label>Precio</label><input id="f_p" type="number" min="0" value="'+(p.price||"")+'"></div></div>'
+ +'<div class="row" style="margin-top:14px"><button class="ghost" onclick="close()">Cancelar</button><button onclick="saveProd(\''+(id||"")+'\')">Guardar</button></div>'
+ +(id?'<div style="margin-top:10px"><button class="ghost" style="color:var(--bad)" onclick="delProd(\''+id+'\')">Eliminar producto</button></div>':'');
+ dlg.showModal();
+}
+function saveProd(id){
+ var n=$("#f_n").value.trim(),c=$("#f_c").value.trim();
+ if(!n){toast("Escribe el nombre del producto");return}
+ var d=S.products.find(function(x){return c&&x.code===c&&x.id!==id});
+ if(d){toast("Ese código ya existe en: "+d.name);return}
+ var m=+$("#f_m").value||0,pr=+$("#f_p").value||0;
+ if(id){var p=S.products.find(function(x){return x.id===id});p.name=n;p.code=c;p.min=m;p.price=pr}
+ else{var s=Math.max(0,parseInt($("#f_s").value)||0);var p={id:uid(),name:n,code:c,stock:s,min:m,price:pr};S.products.push(p);
+  if(s)S.moves.push({id:uid(),pid:p.id,name:n,type:"in",qty:s,note:"Stock inicial",ts:Date.now()})}
+ save();close();
+}
+function delProd(id){if(confirm("¿Eliminar este producto y mantener su historial?")){S.products=S.products.filter(function(x){return x.id!==id});save();close()}}
+function moveDlg(id){
+ var p=S.products.find(function(x){return x.id===id});if(!p)return;
+ dlg.innerHTML='<h2 style="margin:0">'+esc(p.name)+'</h2><p class="sub">'+esc(p.code||"Sin código")+' · Stock actual: <b>'+p.stock+'</b></p>'
+ +'<label>Cantidad</label><input id="m_q" type="number" min="1" value="1" inputmode="numeric">'
+ +'<label>Nota (opcional)</label><input id="m_n" placeholder="Compra, venta, merma…">'
+ +'<div class="row" style="margin-top:14px"><button class="out" onclick="doMove(\''+id+'\',\'out\')">Salida</button><button class="in" onclick="doMove(\''+id+'\',\'in\')">Entrada</button></div>'
+ +'<div class="row" style="margin-top:10px"><button class="ghost" onclick="close()">Cerrar</button><button class="ghost" onclick="editProd(\''+id+'\')">Editar</button></div>';
+ dlg.showModal();
+}
+function doMove(id,t){
+ var p=S.products.find(function(x){return x.id===id}),n=parseInt($("#m_q").value)||0;
+ if(n<1){toast("La cantidad debe ser 1 o más");return}
+ if(t==="out"&&n>p.stock){toast("Solo quedan "+p.stock+" unidades");return}
+ p.stock+=t==="in"?n:-n;
+ S.moves.push({id:uid(),pid:id,name:p.name,type:t,qty:n,note:$("#m_n").value.trim(),ts:Date.now()});
+ save();close();
+}
+function exportCsv(){
+ var rows=[["Nombre","Código","Stock","Mínimo","Precio"]].concat(S.products.map(function(p){return[p.name,p.code,p.stock,p.min,p.price]}));
+ var csv=rows.map(function(r){return r.map(function(c){return '"'+String(c==null?"":c).replace(/"/g,'""')+'"'}).join(",")}).join("\n");
+ var a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));a.download="inventario.csv";document.body.appendChild(a);a.click();a.remove();
+}
+document.querySelectorAll("nav button").forEach(function(b){b.onclick=function(){go(b.dataset.t)}});
+load();render();
+</script>
+</body>
+</html>
